@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>栽培履歴 PDF → CSV 変換</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --green-dark: #2d5016;
+    --green-mid: #4a7c24;
+    --green-light: #7ab648;
+    --green-pale: #e8f5d6;
+    --green-bg: #f4faea;
+    --soil: #8b6340;
+    --soil-light: #f5ede3;
+    --text: #1a1a1a;
+    --text-muted: #666;
+    --border: #d4e8b8;
+    --white: #ffffff;
+    --radius: 12px;
+    --shadow: 0 2px 12px rgba(45,80,22,0.10);
+  }
+
+  body {
+    font-family: 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+    background: var(--green-bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 0 0 60px;
+  }
+
+  header {
+    background: var(--green-dark);
+    color: white;
+    padding: 20px 24px 18px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  header .logo {
+    width: 40px; height: 40px;
+    background: var(--green-light);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+  }
+  header h1 { font-size: 18px; font-weight: 700; letter-spacing: 0.02em; }
+  header p { font-size: 12px; color: rgba(255,255,255,0.65); margin-top: 2px; }
+
+  .container { max-width: 720px; margin: 0 auto; padding: 28px 20px; }
+
+  /* APIキー設定 */
+  .api-card {
+    background: var(--soil-light);
+    border: 1.5px solid #d4b896;
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    margin-bottom: 24px;
+  }
+  .api-card h2 { font-size: 13px; font-weight: 700; color: var(--soil); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+  .api-row { display: flex; gap: 8px; }
+  .api-row input {
+    flex: 1;
+    padding: 9px 12px;
+    border: 1px solid #c4a07a;
+    border-radius: 8px;
+    font-size: 13px;
+    background: white;
+    font-family: monospace;
+    color: var(--text);
+  }
+  .api-row input:focus { outline: none; border-color: var(--green-mid); }
+  .btn-save {
+    padding: 9px 16px;
+    background: var(--soil);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .btn-save:hover { background: #6b4c2e; }
+  .api-status { font-size: 12px; margin-top: 8px; color: var(--text-muted); }
+  .api-status.ok { color: var(--green-mid); }
+  .api-link { font-size: 12px; color: var(--soil); margin-top: 6px; }
+  .api-link a { color: var(--soil); }
+
+  /* アップロードエリア */
+  .upload-card {
+    background: white;
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 40px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    margin-bottom: 16px;
+  }
+  .upload-card:hover, .upload-card.drag { border-color: var(--green-mid); background: var(--green-pale); }
+  .upload-icon { font-size: 44px; margin-bottom: 10px; }
+  .upload-card h2 { font-size: 16px; font-weight: 700; color: var(--green-dark); margin-bottom: 6px; }
+  .upload-card p { font-size: 13px; color: var(--text-muted); }
+  #file-input { display: none; }
+
+  .file-badge {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--green-pale);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: var(--green-dark);
+    font-weight: 600;
+  }
+  .file-badge.show { display: flex; }
+
+  .btn-run {
+    width: 100%;
+    padding: 14px;
+    background: var(--green-mid);
+    color: white;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 20px;
+    transition: background 0.2s, opacity 0.2s;
+    letter-spacing: 0.03em;
+  }
+  .btn-run:hover:not(:disabled) { background: var(--green-dark); }
+  .btn-run:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* プログレス */
+  .progress-wrap { display: none; margin-bottom: 20px; }
+  .progress-wrap.show { display: block; }
+  .progress-label { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
+  .progress-track { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--green-light); border-radius: 3px; transition: width 0.5s ease; }
+
+  /* エラー */
+  .error-box {
+    display: none;
+    padding: 14px 16px;
+    background: #fef2f2;
+    border: 1px solid #fca5a5;
+    border-radius: var(--radius);
+    color: #b91c1c;
+    font-size: 13px;
+    margin-bottom: 16px;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .error-box.show { display: flex; }
+
+  /* 結果 */
+  .results { display: none; }
+  .results.show { display: block; }
+
+  .results-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--green-dark);
+    margin-bottom: 16px;
+  }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .tab {
+    flex: 1;
+    padding: 10px 8px;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    background: white;
+    cursor: pointer;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    transition: all 0.15s;
+  }
+  .tab.active {
+    background: var(--green-dark);
+    color: white;
+    border-color: var(--green-dark);
+  }
+  .tab .cnt {
+    display: inline-block;
+    background: rgba(255,255,255,0.25);
+    border-radius: 10px;
+    font-size: 11px;
+    padding: 1px 7px;
+    margin-left: 4px;
+  }
+  .tab:not(.active) .cnt {
+    background: var(--green-pale);
+    color: var(--green-mid);
+  }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+    background: white;
+    box-shadow: var(--shadow);
+  }
+  .table-wrap table { border-collapse: collapse; font-size: 12px; width: 100%; }
+  .table-wrap th {
+    background: var(--green-pale);
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-weight: 700;
+    color: var(--green-dark);
+    white-space: nowrap;
+  }
+  .table-wrap td {
+    padding: 7px 10px;
+    border-bottom: 1px solid #f0f7e6;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .table-wrap tr:last-child td { border-bottom: none; }
+  .table-wrap tr:hover td { background: var(--green-bg); }
+
+  .btn-dl {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 18px;
+    border: 1.5px solid var(--green-mid);
+    border-radius: 8px;
+    background: white;
+    color: var(--green-dark);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s;
+    text-decoration: none;
+  }
+  .btn-dl:hover { background: var(--green-pale); }
+
+  .btn-dl-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 18px;
+    border: none;
+    border-radius: 8px;
+    background: var(--green-dark);
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 12px;
+    transition: background 0.15s;
+  }
+  .btn-dl-all:hover { background: var(--green-mid); }
+
+  .note {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 16px;
+    padding: 12px 14px;
+    background: var(--soil-light);
+    border-radius: 8px;
+    border-left: 3px solid #c4a07a;
+  }
+
+  footer {
+    text-align: center;
+    margin-top: 40px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🌱</div>
+  <div>
+    <h1>栽培履歴 PDF → CSV 変換ツール</h1>
+    <p>AIがPDFを読み取り、圃場・資材・農薬の3種類のCSVに自動変換します</p>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- APIキー設定 -->
+  <div class="api-card">
+    <h2>🔑 Anthropic APIキー設定</h2>
+    <div class="api-row">
+      <input type="password" id="api-key" placeholder="sk-ant-api03-..." />
+      <button class="btn-save" onclick="saveKey()">保存</button>
+    </div>
+    <div class="api-status" id="api-status">APIキーを入力してください</div>
+    <div class="api-link">
+      APIキーの取得：<a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a>
+      （利用料金：PDF1枚あたり約2〜5円）
+    </div>
+  </div>
+
+  <!-- アップロード -->
+  <div class="upload-card" id="drop-zone" onclick="document.getElementById('file-input').click()">
+    <div class="upload-icon">📄</div>
+    <h2>PDFをここにドロップ、またはクリックして選択</h2>
+    <p>複数ページ対応・手書き・デジタル作成どちらも対応</p>
+  </div>
+  <input type="file" id="file-input" accept=".pdf" />
+
+  <div class="file-badge" id="file-badge">
+    📋 <span id="file-name"></span>
+  </div>
+
+  <div class="error-box" id="error-box">
+    ⚠️ <span id="error-msg"></span>
+  </div>
+
+  <button class="btn-run" id="run-btn" disabled onclick="runExtract()">
+    🤖 AIで読み取ってCSVに変換する
+  </button>
+
+  <!-- プログレス -->
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="progress-label" id="progress-label">AIがPDFを解析中...</div>
+    <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+  </div>
+
+  <!-- 結果 -->
+  <div class="results" id="results">
+    <div class="results-header">
+      ✅ 読み取り完了 — 3種類のCSVを生成しました
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" id="tab-hojo" onclick="switchTab('hojo')">🗺 圃場<span class="cnt" id="cnt-hojo">0件</span></div>
+      <div class="tab" id="tab-shizai" onclick="switchTab('shizai')">🌿 資材<span class="cnt" id="cnt-shizai">0件</span></div>
+      <div class="tab" id="tab-noyaku" onclick="switchTab('noyaku')">💧 農薬<span class="cnt" id="cnt-noyaku">0件</span></div>
+    </div>
+
+    <div class="panel active" id="panel-hojo">
+      <div class="table-wrap" id="preview-hojo"></div>
+      <button class="btn-dl" onclick="downloadCSV('hojo')">⬇ mmdd圃場.csv をダウンロード</button>
+    </div>
+    <div class="panel" id="panel-shizai">
+      <div class="table-wrap" id="preview-shizai"></div>
+      <button class="btn-dl" onclick="downloadCSV('shizai')">⬇ mmdd資材.csv をダウンロード</button>
+    </div>
+    <div class="panel" id="panel-noyaku">
+      <div class="table-wrap" id="preview-noyaku"></div>
+      <button class="btn-dl" onclick="downloadCSV('noyaku')">⬇ mmdd農薬.csv をダウンロード</button>
+    </div>
+
+    <button class="btn-dl-all" onclick="downloadAll()">📦 3ファイルをまとめてダウンロード</button>
+
+    <div class="note">
+      ⚠️ AIによる読み取りのため、まれに誤りが含まれる場合があります。ダウンロード後に内容をご確認ください。
+    </div>
+  </div>
+
+  <footer>社内用ツール — Powered by Claude AI (Anthropic)</footer>
+</div>
+
+<script>
+let pdfBase64 = null;
+let csvData = { hojo: '', shizai: '', noyaku: '' };
+
+const HOJO_H = ['圃場名称','都道府県','住所','面積(a)','品種名','前作','栽培方法','播種日','定植日','堆肥','周辺栽培作物','収穫時期','収穫予定量'];
+const SHIZAI_H = ['区分','名称','種類','N-P-K','製造／販売元','検査有無','原材料の種類','計画(10a当り)予定時期','使用量(kg)','実績(10a当り)使用日','使用量(kg)'];
+const NOYAKU_H = ['名称','有効成分','備考','N/C','計画(10a当り)予定時期','散布量薬量','希釈倍率希釈水量','実績(10a当り)使用日','散布量薬量','希釈倍率希釈水量','備考'];
+
+// APIキー管理
+function saveKey() {
+  const key = document.getElementById('api-key').value.trim();
+  if (!key.startsWith('sk-ant-')) {
+    document.getElementById('api-status').textContent = '⚠ 正しいAPIキーを入力してください（sk-ant-で始まります）';
+    document.getElementById('api-status').className = 'api-status';
+    return;
+  }
+  sessionStorage.setItem('anthropic_key', key);
+  document.getElementById('api-status').textContent = '✓ APIキーを設定しました（このブラウザセッション中のみ保持）';
+  document.getElementById('api-status').className = 'api-status ok';
+  checkReady();
+}
+
+function getKey() { return sessionStorage.getItem('anthropic_key') || ''; }
+
+window.addEventListener('load', () => {
+  const k = getKey();
+  if (k) {
+    document.getElementById('api-key').value = k;
+    document.getElementById('api-status').textContent = '✓ APIキー設定済み';
+    document.getElementById('api-status').className = 'api-status ok';
+  }
+});
+
+// ファイル読み込み
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type === 'application/pdf') loadFile(f);
+});
+document.getElementById('file-input').addEventListener('change', e => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    pdfBase64 = reader.result.split(',')[1];
+    document.getElementById('file-name').textContent = file.name;
+    document.getElementById('file-badge').classList.add('show');
+    hideError();
+    document.getElementById('results').classList.remove('show');
+    checkReady();
+  };
+  reader.readAsDataURL(file);
+}
+
+function checkReady() {
+  document.getElementById('run-btn').disabled = !(pdfBase64 && getKey());
+}
+
+function showError(msg) {
+  const b = document.getElementById('error-box');
+  document.getElementById('error-msg').textContent = msg;
+  b.classList.add('show');
+}
+function hideError() { document.getElementById('error-box').classList.remove('show'); }
+
+function setProgress(pct, label) {
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-label').textContent = label;
+}
+
+function switchTab(name) {
+  ['hojo','shizai','noyaku'].forEach(t => {
+    document.getElementById('tab-' + t).classList.toggle('active', t === name);
+    document.getElementById('panel-' + t).classList.toggle('active', t === name);
+  });
+}
+
+function toCSV(headers, rows) {
+  const all = [headers, ...rows];
+  return all.map(row => row.map(c => {
+    const s = c == null ? '' : String(c);
+    return (s.includes(',') || s.includes('"') || s.includes('\n'))
+      ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }).join(',')).join('\r\n');
+}
+
+function renderTable(id, headers, rows) {
+  const maxR = 6;
+  let h = '<table><thead><tr>' + headers.map(h => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>';
+  rows.slice(0, maxR).forEach(row => {
+    h += '<tr>' + headers.map((_, i) => '<td>' + (row[i] || '') + '</td>').join('') + '</tr>';
+  });
+  if (rows.length > maxR) h += '<tr><td colspan="' + headers.length + '" style="color:#888;font-style:italic;padding:8px 10px;">…他 ' + (rows.length - maxR) + ' 行</td></tr>';
+  h += '</tbody></table>';
+  document.getElementById(id).innerHTML = h;
+}
+
+function downloadCSV(type) {
+  const names = { hojo: 'mmdd圃場.csv', shizai: 'mmdd資材.csv', noyaku: 'mmdd農薬.csv' };
+  const blob = new Blob(['\uFEFF' + csvData[type]], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = names[type];
+  a.click();
+}
+
+function downloadAll() {
+  ['hojo','shizai','noyaku'].forEach((t, i) => setTimeout(() => downloadCSV(t), i * 400));
+}
+
+async function runExtract() {
+  hideError();
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('progress-wrap').classList.add('show');
+  document.getElementById('results').classList.remove('show');
+  setProgress(10, 'PDFをAIに送信中...');
+
+  const systemPrompt = `あなたは農業の栽培履歴PDFを解析して、指定されたCSV形式でデータを出力する専門家です。
+PDFから以下の3種類のデータを抽出してJSON形式で返してください。
+必ず純粋なJSONのみ返し、マークダウンのコードブロックや説明文は一切含めないでください。
+
+出力形式（ヘッダー行は含めず、データ行のみを配列に入れること）:
+{
+  "hojo": [ ["圃場名称","都道府県","住所","面積(a)","品種名","前作","栽培方法","播種日","定植日","堆肥","周辺栽培作物","収穫時期","収穫予定量"], ... ],
+  "shizai": [ ["区分","名称","種類","N-P-K","製造／販売元","検査有無","原材料の種類","計画(10a当り)予定時期","使用量(kg)","実績(10a当り)使用日","使用量(kg)"], ... ],
+  "noyaku": [ ["名称","有効成分","備考","N/C","計画(10a当り)予定時期","散布量薬量","希釈倍率希釈水量","実績(10a当り)使用日","散布量薬量","希釈倍率希釈水量","備考"], ... ]
+}
+
+抽出ルール:
+- 圃場: 圃場一覧表・圃場リストから全圃場を抽出。都道府県と住所（番地等）を分けて記入。品種名は生産者情報欄から取得。
+- 資材: 肥料・堆肥・資材の全情報を抽出。区分は番号（①〜⑥）で記入。
+- 農薬: 防除履歴から農薬名・有効成分・使用情報を全て抽出。
+- データがない列は空文字列にすること。数値は単位なしで記入。`;
+
+  try {
+    setProgress(30, 'AIがPDF全体を解析中（しばらくお待ちください）...');
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': getKey(),
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-calls': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4000,
+        system: systemPrompt,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
+            { type: 'text', text: 'この栽培履歴PDFから圃場・資材・農薬のデータをすべて抽出し、指定のJSON形式のみで返してください。' }
+          ]
+        }]
+      })
+    });
+
+    setProgress(75, 'データを整形中...');
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || 'APIエラー（ステータス: ' + res.status + '）');
+    }
+
+    const data = await res.json();
+    const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+    } catch {
+      throw new Error('AIの出力を解析できませんでした。もう一度お試しください。');
+    }
+
+    setProgress(90, 'CSVを生成中...');
+
+    const hr = parsed.hojo || [], sr = parsed.shizai || [], nr = parsed.noyaku || [];
+
+    csvData.hojo   = toCSV(HOJO_H, hr);
+    csvData.shizai = toCSV(SHIZAI_H, sr);
+    csvData.noyaku = toCSV(NOYAKU_H, nr);
+
+    document.getElementById('cnt-hojo').textContent   = hr.length + '件';
+    document.getElementById('cnt-shizai').textContent = sr.length + '件';
+    document.getElementById('cnt-noyaku').textContent = nr.length + '件';
+
+    renderTable('preview-hojo',   HOJO_H,   hr);
+    renderTable('preview-shizai', SHIZAI_H, sr);
+    renderTable('preview-noyaku', NOYAKU_H, nr);
+
+    setProgress(100, '完了！');
+    setTimeout(() => {
+      document.getElementById('progress-wrap').classList.remove('show');
+      document.getElementById('results').classList.add('show');
+      switchTab('hojo');
+    }, 500);
+
+  } catch (err) {
+    document.getElementById('progress-wrap').classList.remove('show');
+    showError('エラー: ' + err.message);
+  }
+
+  document.getElementById('run-btn').disabled = false;
+}
+</script>
+</body>
+</html>
